@@ -1,10 +1,9 @@
-from selenium import webdriver
-from seleniumwire import webdriver
-from selenium.common import StaleElementReferenceException, NoSuchElementException
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
-from dotenv import load_dotenv
 import os
+
+from selenium import webdriver
+from selenium.common.exceptions import StaleElementReferenceException, NoSuchElementException
+from selenium.webdriver.common.by import By
+from dotenv import load_dotenv
 import time
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
@@ -14,67 +13,77 @@ from selenium.webdriver import Remote, ChromeOptions
 
 load_dotenv()
 
+SBR_WEBDRIVER = os.environ.get('SBR_WEBDRIVER')
+
 
 def setup_driver():
-    chrome_options = webdriver.ChromeOptions()
-    chrome_options.add_experimental_option("detach", True)
-    return webdriver.Chrome(options=chrome_options)
+    print('==> Connecting to Scraping Browser...')
+    sbr_connection = ChromiumRemoteConnection(SBR_WEBDRIVER, 'goog', 'chrome')
+    driver = Remote(sbr_connection, options=ChromeOptions())
+    print('==> Connected!')
+    return driver
 
 
 class Jobs:
+    JOB_LINK_LOCATOR = (By.XPATH, "/html/body/nav/ul/li[4]")
+    JOB_SEARCH_KEYWORD_LOCATOR = (By.NAME, "keywords")
+    LOCATION_SEARCH_LOCATOR = (By.NAME, "location")
+    LOCATION_EXIT_BUTTON_LOCATOR = (
+    By.XPATH, "/html/body/div[1]/header/nav/section/section[2]/form/section[2]/button/icon")
+    JOB_SEARCH_BAR_LOCATION_LOCATOR = (By.ID, "job-search-bar-location")
+    TIME_DROPDOWN_LOCATOR = (By.XPATH, '/html/body/div[1]/section/div/div/div/form/ul/li[1]/div/div/button')
+    PAST_MONTH_SELECTION_LOCATOR = (
+    By.XPATH, '/html/body/div[1]/section/div/div/div/form/ul/li[1]/div/div/div/div/div/div[2]/input')
+    DONE_BUTTON_LOCATOR = (By.CLASS_NAME, 'filter__submit-button')
+
     def __init__(self):
         self.driver = setup_driver()
-        self.login()
         self.search_jobs()
 
-    def login(self):
-        time.sleep(2)
-        EMAIL = os.environ.get('EMAIL')
-        PASSWORD = os.environ.get('PASSWORD')
-        self.driver.get("https://www.linkedin.com/")
+    def click_element(self, descriptor, locator, wait_time=10):
+        """Click on a web element if it exists"""
+        try:
+            element = WebDriverWait(self.driver, wait_time).until(
+                EC.element_to_be_clickable(locator))
+            element.click()
+            print(f"==> {descriptor} clicked!")
+        except NoSuchElementException:
+            print(f"==> Failed to find {descriptor}")
 
-        time.sleep(2)
-
-        first_name = self.driver.find_element(By.XPATH,
-                                              value="/html/body/main/section[1]/div/div/form/div[1]/div[1]/div/div/input")
-        first_name.send_keys(EMAIL)
-
-        time.sleep(2)
-
-        name = self.driver.find_element(By.NAME, value="session_password")
-        name.send_keys(PASSWORD)
-
-        time.sleep(2)
-
-        submit_button = self.driver.find_element(By.XPATH, "/html/body/main/section[1]/div/div/form/div[2]/button")
-        submit_button.click()
-
-        time.sleep(10)
+    def send_keys_to_element(self, descriptor, locator, keys, wait_time=10):
+        """Send keys to a web element if it exists"""
+        try:
+            element = WebDriverWait(self.driver, wait_time).until(
+                EC.presence_of_element_located(locator))
+            element.send_keys(keys)
+            print(f"==> {descriptor} received input: {keys}")
+        except NoSuchElementException:
+            print(f"==> Failed to find {descriptor}")
 
     def search_jobs(self):
+        print('==> Navigating to LinkedIn...')
+        self.driver.get("https://www.linkedin.com")
         time.sleep(2)
 
-        job_link = self.driver.find_element(By.XPATH, "/html/body/div[6]/header/div/nav/ul/li[3]/a")
-        time.sleep(2)
-
-        job_link.click()
+        self.click_element("Job Link", self.JOB_LINK_LOCATOR)
+        self.send_keys_to_element("Job Search", self.JOB_SEARCH_KEYWORD_LOCATOR, "software developer")
         time.sleep(5)
+        self.send_keys_to_element("Job Search", self.JOB_SEARCH_KEYWORD_LOCATOR, Keys.ENTER)
 
-        job_search = self.driver.find_element(By.XPATH,
-                                              "/html/body/div[6]/header/div/div/div/div[2]/div[2]/div/div/input[1]")
-
-        time.sleep(2)
-        job_search.click()
-
-        time.sleep(2)
-        job_search.send_keys("software developer")
-
-        time.sleep(2)
-        job_search.send_keys(Keys.ENTER)
+        self.click_element("Location Search", self.LOCATION_SEARCH_LOCATOR, 5)
+        time.sleep(1)
+        self.click_element("Location exit button", self.LOCATION_EXIT_BUTTON_LOCATOR, 2)
+        time.sleep(1)
+        self.send_keys_to_element("Location Search", self.JOB_SEARCH_BAR_LOCATION_LOCATOR,
+                                  "Ghent, Flemish Region, Belgium")
+        time.sleep(1)
+        self.send_keys_to_element("Location Search", self.JOB_SEARCH_BAR_LOCATION_LOCATOR, Keys.ENTER)
+        self.click_element("Time Dropdown", self.TIME_DROPDOWN_LOCATOR)
+        self.click_element("Past Month Selection", self.PAST_MONTH_SELECTION_LOCATOR)
+        self.click_element("Done Button", self.DONE_BUTTON_LOCATOR)
 
     def scrape_jobs(self):
         time.sleep(2)
-        page = 1
         job_dictionary = {}
         i = 0
         while i < 7:  # Reduced to 5 pages for testing
@@ -121,9 +130,14 @@ class Jobs:
                               f" recruiter: {hiring_person_profile_link}")
 
                     except StaleElementReferenceException:
-                        print("Stale element reference. Skipping.")
-                # self.driver.find_elements("xpath", f"//button[@aria-label='Page {page}']")[0].click()
-                # page += 1
+                        print(
+                            "Stale element reference. Skipping.")
+                        # self.driver.find_elements("xpath", f"//button[@aria-label='Page {page}']")[0].click()
+                        # page += 1
+        print('==> Stopping driver...')
+        self.driver.quit()
+        print('==> Driver stopped!')
+
 
     def run(self):
         time.sleep(2)
